@@ -2,7 +2,7 @@
   "name": "@openai/agents-core",
   "repository": "https://github.com/openai/openai-agents-js",
   "homepage": "https://openai.github.io/openai-agents-js/",
-  "version": "0.0.13",
+  "version": "0.1.3",
   "description": "The OpenAI Agents SDK is a lightweight yet powerful framework for building multi-agent workflows.",
   "author": "OpenAI <support@openai.com>",
   "main": "dist/index.js",
@@ -14,72 +14,54 @@
   },
   "exports": {
     ".": {
-      "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      },
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.mjs"
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
     },
     "./model": {
-      "require": {
-        "types": "./dist/model.d.ts",
-        "default": "./dist/model.js"
-      },
       "types": "./dist/model.d.ts",
-      "default": "./dist/model.mjs"
+      "require": "./dist/model.js",
+      "import": "./dist/model.mjs"
     },
     "./utils": {
-      "require": {
-        "types": "./dist/utils/index.d.ts",
-        "default": "./dist/utils/index.js"
-      },
       "types": "./dist/utils/index.d.ts",
-      "default": "./dist/utils/index.mjs"
+      "require": "./dist/utils/index.js",
+      "import": "./dist/utils/index.mjs"
     },
     "./extensions": {
-      "require": {
-        "types": "./dist/extensions/index.d.ts",
-        "default": "./dist/extensions/index.js"
-      },
       "types": "./dist/extensions/index.d.ts",
-      "default": "./dist/extensions/index.mjs"
+      "require": "./dist/extensions/index.js",
+      "import": "./dist/extensions/index.mjs"
     },
     "./types": {
-      "require": {
-        "types": "./dist/types/index.d.ts",
-        "default": "./dist/types/index.js"
-      },
       "types": "./dist/types/index.d.ts",
-      "default": "./dist/types/index.mjs"
+      "require": "./dist/types/index.js",
+      "import": "./dist/types/index.mjs"
     },
     "./_shims": {
       "workerd": {
-        "require": "./dist/shims/shims-workerd.js",
         "types": "./dist/shims/shims-workerd.d.ts",
-        "default": "./dist/shims/shims-workerd.mjs"
+        "require": "./dist/shims/shims-workerd.js",
+        "import": "./dist/shims/shims-workerd.mjs"
       },
       "browser": {
-        "require": "./dist/shims/shims-browser.js",
         "types": "./dist/shims/shims-browser.d.ts",
-        "default": "./dist/shims/shims-browser.mjs"
+        "require": "./dist/shims/shims-browser.js",
+        "import": "./dist/shims/shims-browser.mjs"
       },
       "node": {
-        "require": "./dist/shims/shims-node.js",
         "types": "./dist/shims/shims-node.d.ts",
-        "default": "./dist/shims/shims-node.mjs"
+        "require": "./dist/shims/shims-node.js",
+        "import": "./dist/shims/shims-node.mjs"
       },
       "react-native": {
         "require": "./dist/shims/shims-react-native.js",
         "types": "./dist/shims/shims-react-native.d.ts",
         "default": "./dist/shims/shims-react-native.mjs"
       },
-      "require": {
-        "types": "./dist/shims/shims-node.d.ts",
-        "default": "./dist/shims/shims-node.js"
-      },
-      "types": "./dist/shims/shims-node.d.ts",
-      "default": "./dist/shims/shims-node.mjs"
+      "types": "./dist/shims/shims.d.ts",
+      "require": "./dist/shims/shims.js",
+      "import": "./dist/shims/shims.mjs"
     }
   },
   "keywords": [
@@ -90,18 +72,18 @@
   ],
   "license": "MIT",
   "optionalDependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@modelcontextprotocol/sdk": "^1.17.2"
   },
   "dependencies": {
     "@openai/zod": "npm:zod@3.25.40 - 3.25.67",
     "@ungap/structured-clone": "^1.3.0",
-    "debug": "^4.4.0",
-    "openai": "^5.10.1",
     "events": "^3.3.0",
-    "react-native-uuid": "^2.0.3"
+    "react-native-uuid": "^2.0.3",
+    "openai": "^5.20.2",
+    "debug": "^4.4.0"
   },
   "peerDependencies": {
-    "zod": "3.25.40 - 3.25.67"
+    "zod": "^3.25.40"
   },
   "peerDependenciesMeta": {
     "zod": {
@@ -129,8 +111,8 @@
   },
   "devDependencies": {
     "@types/debug": "^4.1.12",
-    "zod": "3.25.40 - 3.25.67",
-    "@types/ungap__structured-clone": "^1.2.0"
+    "@types/ungap__structured-clone": "^1.2.0",
+    "zod": "^3.25.40"
   },
   "files": [
     "dist"

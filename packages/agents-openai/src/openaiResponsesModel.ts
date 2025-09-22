@@ -25,7 +25,7 @@ import {
   ToolChoiceOptions,
   ToolChoiceTypes,
 } from 'openai/resources/responses/responses';
-import { z } from '@openai/zod/v3';
+import { z } from 'zod';
 import { HEADERS } from './defaults';
 import {
   CodeInterpreterStatus,
@@ -36,10 +36,16 @@ import {
 import { camelOrSnakeToSnakeCase } from './utils/providerData';
 import { ProviderData } from '@openai/agents-core/types';
 
-type ToolChoice = ToolChoiceOptions | ToolChoiceTypes | ToolChoiceFunction;
+type ToolChoice =
+  | ToolChoiceOptions
+  | ToolChoiceTypes
+  // TOOD: remove this once the underlying ToolChoiceTypes include this
+  | { type: 'web_search' }
+  | ToolChoiceFunction;
 
 const HostedToolChoice = z.enum([
   'file_search',
+  'web_search',
   'web_search_preview',
   'computer_use_preview',
   'code_interpreter',
@@ -71,12 +77,14 @@ function getToolChoice(
 
 function getResponseFormat(
   outputType: SerializedOutputType,
+  otherProperties: Record<string, any> | undefined,
 ): OpenAI.Responses.ResponseTextConfig | undefined {
   if (outputType === 'text') {
-    return undefined;
+    return otherProperties;
   }
 
   return {
+    ...otherProperties,
     format: outputType,
   };
 }
@@ -137,6 +145,16 @@ function converTool<_TContext = unknown>(
     if (tool.providerData?.type === 'web_search') {
       return {
         tool: {
+          type: 'web_search',
+          user_location: tool.providerData.user_location,
+          filters: tool.providerData.filters,
+          search_context_size: tool.providerData.search_context_size,
+        },
+        include: undefined,
+      };
+    } else if (tool.providerData?.type === 'web_search_preview') {
+      return {
+        tool: {
           type: 'web_search_preview',
           user_location: tool.providerData.user_location,
           search_context_size: tool.providerData.search_context_size,
@@ -192,6 +210,8 @@ function converTool<_TContext = unknown>(
           type: 'mcp',
           server_label: tool.providerData.server_label,
           server_url: tool.providerData.server_url,
+          connector_id: tool.providerData.connector_id,
+          authorization: tool.providerData.authorization,
           allowed_tools: tool.providerData.allowed_tools,
           headers: tool.providerData.headers,
           require_approval: convertMCPRequireApproval(
@@ -830,7 +850,9 @@ export class OpenAIResponsesModel implements Model {
     const input = getInputItems(request.input);
     const { tools, include } = getTools(request.tools, request.handoffs);
     const toolChoice = getToolChoice(request.modelSettings.toolChoice);
-    const responseFormat = getResponseFormat(request.outputType);
+    const { text, ...restOfProviderData } =
+      request.modelSettings.providerData ?? {};
+    const responseFormat = getResponseFormat(request.outputType, text);
     const prompt = getPrompt(request.prompt);
 
     let parallelToolCalls: boolean | undefined = undefined;
@@ -849,6 +871,7 @@ export class OpenAIResponsesModel implements Model {
       include,
       tools,
       previous_response_id: request.previousResponseId,
+      conversation: request.conversationId,
       prompt,
       temperature: request.modelSettings.temperature,
       top_p: request.modelSettings.topP,
@@ -859,7 +882,7 @@ export class OpenAIResponsesModel implements Model {
       stream,
       text: responseFormat,
       store: request.modelSettings.store,
-      ...request.modelSettings.providerData,
+      ...restOfProviderData,
     };
 
     if (logger.dontLogModelData) {

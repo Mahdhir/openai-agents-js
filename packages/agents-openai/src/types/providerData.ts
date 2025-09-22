@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 
 export type WebSearchTool = Omit<OpenAI.Responses.WebSearchTool, 'type'> & {
   type: 'web_search';
-  name: 'web_search_preview' | string;
+  name: 'web_search' | 'web_search_preview' | string;
 };
 
 export type FileSearchTool = Omit<OpenAI.Responses.FileSearchTool, 'type'> & {

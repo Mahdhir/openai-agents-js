@@ -2,32 +2,35 @@ import { describe, test, expect, vi } from 'vitest';
 import {
   AiSdkModel,
   getResponseFormat,
-  itemsToLanguageV1Messages,
+  itemsToLanguageV2Messages,
   parseArguments,
-  toolToLanguageV1Tool,
+  toolChoiceToLanguageV2Format,
+  toolToLanguageV2Tool,
 } from '../src/aiSdk';
 import { protocol, withTrace, UserError } from '@openai/agents';
 import { ReadableStream } from 'node:stream/web';
-import type { LanguageModelV1 } from '@ai-sdk/provider';
+import type { LanguageModelV2 } from '@ai-sdk/provider';
 import type { SerializedOutputType } from '@openai/agents';
 
 function stubModel(
-  partial: Partial<Pick<LanguageModelV1, 'doGenerate' | 'doStream'>>,
-): LanguageModelV1 {
+  partial: Partial<Pick<LanguageModelV2, 'doGenerate' | 'doStream'>>,
+): LanguageModelV2 {
   return {
-    specificationVersion: 'v1',
+    specificationVersion: 'v2',
     provider: 'stub',
     modelId: 'm',
-    defaultObjectGenerationMode: undefined,
+    supportedUrls: {} as any,
     async doGenerate(options) {
       if (partial.doGenerate) {
         return partial.doGenerate(options) as any;
       }
       return {
-        text: '',
+        content: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        response: { id: 'id' },
+        providerMetadata: {},
         finishReason: 'stop',
-        usage: { promptTokens: 0, completionTokens: 0 },
-        rawCall: { rawPrompt: '', rawSettings: {} },
+        warnings: [],
       } as any;
     },
     async doStream(options) {
@@ -36,10 +39,9 @@ function stubModel(
       }
       return {
         stream: new ReadableStream(),
-        rawCall: { rawPrompt: '', rawSettings: {} },
-      };
+      } as any;
     },
-  } as LanguageModelV1;
+  } as LanguageModelV2;
 }
 
 function partsStream(parts: any[]): ReadableStream<any> {
@@ -82,7 +84,7 @@ describe('getResponseFormat', () => {
   });
 });
 
-describe('itemsToLanguageV1Messages', () => {
+describe('itemsToLanguageV2Messages', () => {
   test('converts user text and function call items', () => {
     const items: protocol.ModelItem[] = [
       {
@@ -106,12 +108,12 @@ describe('itemsToLanguageV1Messages', () => {
         type: 'function_call_result',
         callId: '1',
         name: 'foo',
-        output: { type: 'output_text', text: 'out' },
+        output: { type: 'text', text: 'out' },
         providerData: { b: 2 },
       } as any,
     ];
 
-    const msgs = itemsToLanguageV1Messages(stubModel({}), items);
+    const msgs = itemsToLanguageV2Messages(stubModel({}), items);
     expect(msgs).toEqual([
       {
         role: 'user',
@@ -119,10 +121,10 @@ describe('itemsToLanguageV1Messages', () => {
           {
             type: 'text',
             text: 'hi',
-            providerMetadata: { test: { cacheControl: { type: 'ephemeral' } } },
+            providerOptions: { test: { cacheControl: { type: 'ephemeral' } } },
           },
         ],
-        providerMetadata: {},
+        providerOptions: {},
       },
       {
         role: 'assistant',
@@ -131,11 +133,11 @@ describe('itemsToLanguageV1Messages', () => {
             type: 'tool-call',
             toolCallId: '1',
             toolName: 'foo',
-            args: {},
-            providerMetadata: { a: 1 },
+            input: {},
+            providerOptions: { a: 1 },
           },
         ],
-        providerMetadata: { a: 1 },
+        providerOptions: { a: 1 },
       },
       {
         role: 'tool',
@@ -144,11 +146,11 @@ describe('itemsToLanguageV1Messages', () => {
             type: 'tool-result',
             toolCallId: '1',
             toolName: 'foo',
-            result: { type: 'output_text', text: 'out' },
-            providerMetadata: { b: 2 },
+            output: { type: 'text', value: 'out' },
+            providerOptions: { b: 2 },
           },
         ],
-        providerMetadata: { b: 2 },
+        providerOptions: { b: 2 },
       },
     ]);
   });
@@ -157,7 +159,20 @@ describe('itemsToLanguageV1Messages', () => {
     const items: protocol.ModelItem[] = [
       { type: 'hosted_tool_call', name: 'search' } as any,
     ];
-    expect(() => itemsToLanguageV1Messages(stubModel({}), items)).toThrow();
+    expect(() => itemsToLanguageV2Messages(stubModel({}), items)).toThrow();
+  });
+
+  test('throws on computer tool calls and results', () => {
+    expect(() =>
+      itemsToLanguageV2Messages(stubModel({}), [
+        { type: 'computer_call' } as any,
+      ]),
+    ).toThrow(UserError);
+    expect(() =>
+      itemsToLanguageV2Messages(stubModel({}), [
+        { type: 'computer_call_result' } as any,
+      ]),
+    ).toThrow(UserError);
   });
 
   test('converts user images, function results and reasoning items', () => {
@@ -179,23 +194,24 @@ describe('itemsToLanguageV1Messages', () => {
         type: 'function_call_result',
         callId: '1',
         name: 'do',
-        output: { type: 'output_text', text: 'out' },
+        output: { type: 'text', text: 'out' },
       } as any,
       { type: 'reasoning', content: [{ text: 'why' }] } as any,
     ];
-    const msgs = itemsToLanguageV1Messages(stubModel({}), items);
+    const msgs = itemsToLanguageV2Messages(stubModel({}), items);
     expect(msgs).toEqual([
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'hi', providerMetadata: {} },
+          { type: 'text', text: 'hi', providerOptions: {} },
           {
-            type: 'image',
-            image: new URL('http://x/img'),
-            providerMetadata: {},
+            type: 'file',
+            data: new URL('http://x/img'),
+            mediaType: 'image/*',
+            providerOptions: {},
           },
         ],
-        providerMetadata: {},
+        providerOptions: {},
       },
       {
         role: 'assistant',
@@ -204,11 +220,11 @@ describe('itemsToLanguageV1Messages', () => {
             type: 'tool-call',
             toolCallId: '1',
             toolName: 'do',
-            args: {},
-            providerMetadata: {},
+            input: {},
+            providerOptions: {},
           },
         ],
-        providerMetadata: {},
+        providerOptions: {},
       },
       {
         role: 'tool',
@@ -217,16 +233,16 @@ describe('itemsToLanguageV1Messages', () => {
             type: 'tool-result',
             toolCallId: '1',
             toolName: 'do',
-            result: { type: 'output_text', text: 'out' },
-            providerMetadata: {},
+            output: { type: 'text', value: 'out' },
+            providerOptions: {},
           },
         ],
-        providerMetadata: {},
+        providerOptions: {},
       },
       {
         role: 'assistant',
-        content: [{ type: 'reasoning', text: 'why', providerMetadata: {} }],
-        providerMetadata: {},
+        content: [{ type: 'reasoning', text: 'why', providerOptions: {} }],
+        providerOptions: {},
       },
     ]);
   });
@@ -239,13 +255,13 @@ describe('itemsToLanguageV1Messages', () => {
         providerData: undefined,
       } as any,
     ];
-    expect(() => itemsToLanguageV1Messages(stubModel({}), items)).not.toThrow();
-    const msgs = itemsToLanguageV1Messages(stubModel({}), items);
+    expect(() => itemsToLanguageV2Messages(stubModel({}), items)).not.toThrow();
+    const msgs = itemsToLanguageV2Messages(stubModel({}), items);
     expect(msgs).toEqual([
       {
         role: 'user',
-        content: [{ type: 'text', text: 'hi', providerMetadata: {} }],
-        providerMetadata: {},
+        content: [{ type: 'text', text: 'hi', providerOptions: {} }],
+        providerOptions: {},
       },
     ]);
   });
@@ -254,18 +270,73 @@ describe('itemsToLanguageV1Messages', () => {
     const bad: protocol.ModelItem[] = [
       { role: 'user', content: [{ type: 'bad' as any }] } as any,
     ];
-    expect(() => itemsToLanguageV1Messages(stubModel({}), bad)).toThrow(
+    expect(() => itemsToLanguageV2Messages(stubModel({}), bad)).toThrow(
       UserError,
     );
 
     const unknown: protocol.ModelItem[] = [{ type: 'bogus' } as any];
-    expect(() => itemsToLanguageV1Messages(stubModel({}), unknown)).toThrow(
+    expect(() => itemsToLanguageV2Messages(stubModel({}), unknown)).toThrow(
       UserError,
     );
   });
+
+  test('supports input_file string and rejects non-string file id', () => {
+    const ok: protocol.ModelItem[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_file',
+            file: 'file_123',
+          },
+        ],
+      } as any,
+    ];
+
+    const msgs = itemsToLanguageV2Messages(stubModel({}), ok);
+    expect(msgs).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'file',
+            file: 'file_123',
+            mediaType: 'application/octet-stream',
+            data: 'file_123',
+            providerOptions: {},
+          },
+        ],
+        providerOptions: {},
+      },
+    ]);
+
+    const bad: protocol.ModelItem[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_file',
+            file: { not: 'a-string' },
+          },
+        ],
+      } as any,
+    ];
+    expect(() => itemsToLanguageV2Messages(stubModel({}), bad)).toThrow(
+      /File ID is not supported/,
+    );
+  });
+
+  test('passes through unknown items via providerData', () => {
+    const custom = { role: 'system', content: 'x', providerOptions: { a: 1 } };
+    const items: protocol.ModelItem[] = [
+      { type: 'unknown', providerData: custom } as any,
+    ];
+    const msgs = itemsToLanguageV2Messages(stubModel({}), items);
+    expect(msgs).toEqual([custom]);
+  });
 });
 
-describe('toolToLanguageV1Tool', () => {
+describe('toolToLanguageV2Tool', () => {
   const model = stubModel({});
   test('maps function tools', () => {
     const tool = {
@@ -274,11 +345,11 @@ describe('toolToLanguageV1Tool', () => {
       description: 'd',
       parameters: {} as any,
     } as any;
-    expect(toolToLanguageV1Tool(model, tool)).toEqual({
+    expect(toolToLanguageV2Tool(model, tool)).toEqual({
       type: 'function',
       name: 'foo',
       description: 'd',
-      parameters: {},
+      inputSchema: {},
     });
   });
 
@@ -288,7 +359,7 @@ describe('toolToLanguageV1Tool', () => {
       name: 'search',
       providerData: { args: { q: 1 } },
     } as any;
-    expect(toolToLanguageV1Tool(model, tool)).toEqual({
+    expect(toolToLanguageV2Tool(model, tool)).toEqual({
       type: 'provider-defined',
       id: `${model.provider}.search`,
       name: 'search',
@@ -303,7 +374,7 @@ describe('toolToLanguageV1Tool', () => {
       environment: 'env',
       dimensions: [2, 3],
     } as any;
-    expect(toolToLanguageV1Tool(model, tool)).toEqual({
+    expect(toolToLanguageV2Tool(model, tool)).toEqual({
       type: 'provider-defined',
       id: `${model.provider}.comp`,
       name: 'comp',
@@ -313,7 +384,7 @@ describe('toolToLanguageV1Tool', () => {
 
   test('throws on unknown type', () => {
     const tool = { type: 'x', name: 'u' } as any;
-    expect(() => toolToLanguageV1Tool(model, tool)).toThrow();
+    expect(() => toolToLanguageV2Tool(model, tool)).toThrow();
   });
 });
 
@@ -323,11 +394,12 @@ describe('AiSdkModel.getResponse', () => {
       stubModel({
         async doGenerate() {
           return {
-            text: 'ok',
-            finishReason: 'stop',
-            usage: { promptTokens: 1, completionTokens: 2 },
+            content: [{ type: 'text', text: 'ok' }],
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
             providerMetadata: { p: 1 },
-            rawCall: { rawPrompt: '', rawSettings: {} },
+            response: { id: 'id' },
+            finishReason: 'stop',
+            warnings: [],
           } as any;
         },
       }),
@@ -355,6 +427,77 @@ describe('AiSdkModel.getResponse', () => {
     ]);
   });
 
+  test('forwards toolChoice to AI SDK (generate)', async () => {
+    const seen: any[] = [];
+    const model = new AiSdkModel(
+      stubModel({
+        async doGenerate(options) {
+          seen.push(options.toolChoice);
+          return {
+            content: [{ type: 'text', text: 'ok' }],
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            providerMetadata: {},
+            response: { id: 'id' },
+            finishReason: 'stop',
+            warnings: [],
+          } as any;
+        },
+      }),
+    );
+
+    // auto
+    await withTrace('t', () =>
+      model.getResponse({
+        input: 'hi',
+        tools: [],
+        handoffs: [],
+        modelSettings: { toolChoice: 'auto' },
+        outputType: 'text',
+        tracing: false,
+      } as any),
+    );
+    // required
+    await withTrace('t', () =>
+      model.getResponse({
+        input: 'hi',
+        tools: [],
+        handoffs: [],
+        modelSettings: { toolChoice: 'required' },
+        outputType: 'text',
+        tracing: false,
+      } as any),
+    );
+    // none
+    await withTrace('t', () =>
+      model.getResponse({
+        input: 'hi',
+        tools: [],
+        handoffs: [],
+        modelSettings: { toolChoice: 'none' },
+        outputType: 'text',
+        tracing: false,
+      } as any),
+    );
+    // specific tool
+    await withTrace('t', () =>
+      model.getResponse({
+        input: 'hi',
+        tools: [],
+        handoffs: [],
+        modelSettings: { toolChoice: 'myTool' as any },
+        outputType: 'text',
+        tracing: false,
+      } as any),
+    );
+
+    expect(seen).toEqual([
+      { type: 'auto' },
+      { type: 'required' },
+      { type: 'none' },
+      { type: 'tool', toolName: 'myTool' },
+    ]);
+  });
+
   test('aborts when signal already aborted', async () => {
     const abort = new AbortController();
     abort.abort();
@@ -363,10 +506,11 @@ describe('AiSdkModel.getResponse', () => {
         throw new Error('aborted');
       }
       return {
-        text: 'should not',
+        content: [{ type: 'text', text: 'should not' }],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        response: { id: 'id' },
         finishReason: 'stop',
-        usage: { promptTokens: 0, completionTokens: 0 },
-        rawCall: { rawPrompt: '', rawSettings: {} },
+        warnings: [],
       };
     });
     const model = new AiSdkModel(
@@ -397,18 +541,19 @@ describe('AiSdkModel.getResponse', () => {
       stubModel({
         async doGenerate() {
           return {
-            toolCalls: [
+            content: [
               {
-                toolCallType: 'function',
+                type: 'tool-call',
                 toolCallId: 'c1',
                 toolName: 'foo',
-                args: {} as any,
+                input: {} as any,
               },
             ],
-            finishReason: 'stop',
-            usage: { promptTokens: 1, completionTokens: 2 },
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
             providerMetadata: { p: 1 },
-            rawCall: { rawPrompt: '', rawSettings: {} },
+            response: { id: 'id' },
+            finishReason: 'stop',
+            warnings: [],
           } as any;
         },
       }),
@@ -430,7 +575,7 @@ describe('AiSdkModel.getResponse', () => {
         type: 'function_call',
         callId: 'c1',
         name: 'foo',
-        arguments: {},
+        arguments: '{}',
         status: 'completed',
         providerData: { p: 1 },
       },
@@ -467,11 +612,12 @@ describe('AiSdkModel.getResponse', () => {
         async doGenerate(options) {
           received = options.prompt;
           return {
-            text: '',
-            finishReason: 'stop',
-            usage: { promptTokens: 0, completionTokens: 0 },
+            content: [],
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
             providerMetadata: {},
-            rawCall: { rawPrompt: '', rawSettings: {} },
+            response: { id: 'id' },
+            finishReason: 'stop',
+            warnings: [],
           };
         },
       }),
@@ -500,11 +646,16 @@ describe('AiSdkModel.getResponse', () => {
       stubModel({
         async doGenerate() {
           return {
-            text: '',
-            finishReason: 'stop',
-            usage: { promptTokens: Number.NaN, completionTokens: Number.NaN },
+            content: [],
+            usage: {
+              inputTokens: Number.NaN,
+              outputTokens: Number.NaN,
+              totalTokens: Number.NaN,
+            },
             providerMetadata: {},
-            rawCall: { rawPrompt: '', rawSettings: {} },
+            response: { id: 'id' },
+            finishReason: 'stop',
+            warnings: [],
           };
         },
       }),
@@ -535,26 +686,18 @@ describe('AiSdkModel.getResponse', () => {
 describe('AiSdkModel.getStreamedResponse', () => {
   test('streams events and completes', async () => {
     const parts = [
-      { type: 'text-delta', textDelta: 'a' },
+      { type: 'text-delta', delta: 'a' },
       {
         type: 'tool-call',
-        toolCallType: 'function',
         toolCallId: 'c1',
         toolName: 'foo',
-        args: '{"k":',
-      },
-      {
-        type: 'tool-call-delta',
-        toolCallType: 'function',
-        toolCallId: 'c1',
-        toolName: '',
-        argsTextDelta: '"v"}',
+        input: '{"k":"v"}',
       },
       { type: 'response-metadata', id: 'id1' },
       {
         type: 'finish',
         finishReason: 'stop',
-        usage: { promptTokens: 1, completionTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 2 },
       },
     ];
     const model = new AiSdkModel(
@@ -562,7 +705,6 @@ describe('AiSdkModel.getStreamedResponse', () => {
         async doStream() {
           return {
             stream: partsStream(parts),
-            rawCall: { rawPrompt: '', rawSettings: {} },
           } as any;
         },
       }),
@@ -607,7 +749,6 @@ describe('AiSdkModel.getStreamedResponse', () => {
         async doStream() {
           return {
             stream: partsStream(parts),
-            rawCall: { rawPrompt: '', rawSettings: {} },
           } as any;
         },
       }),
@@ -642,7 +783,6 @@ describe('AiSdkModel.getStreamedResponse', () => {
       }
       return {
         stream: partsStream([]),
-        rawCall: { rawPrompt: '', rawSettings: {} },
       } as any;
     });
     const model = new AiSdkModel(
@@ -676,7 +816,6 @@ describe('AiSdkModel.getStreamedResponse', () => {
           received = options.prompt;
           return {
             stream: partsStream([]),
-            rawCall: { rawPrompt: '', rawSettings: {} },
           } as any;
         },
       }),
@@ -704,11 +843,11 @@ describe('AiSdkModel.getStreamedResponse', () => {
 
   test('handles NaN usage in stream finish event', async () => {
     const parts = [
-      { type: 'text-delta', textDelta: 'a' },
+      { type: 'text-delta', delta: 'a' },
       {
         type: 'finish',
         finishReason: 'stop',
-        usage: { promptTokens: Number.NaN, completionTokens: Number.NaN },
+        usage: { inputTokens: Number.NaN, outputTokens: Number.NaN },
       },
     ];
     const model = new AiSdkModel(
@@ -716,7 +855,6 @@ describe('AiSdkModel.getStreamedResponse', () => {
         async doStream() {
           return {
             stream: partsStream(parts),
-            rawCall: { rawPrompt: '', rawSettings: {} },
           } as any;
         },
       }),
@@ -738,6 +876,48 @@ describe('AiSdkModel.getStreamedResponse', () => {
 
     expect(final).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   });
+
+  test('prepends system instructions to prompt for doStream', async () => {
+    let received: any;
+    const model = new AiSdkModel(
+      stubModel({
+        async doStream(options) {
+          received = options.prompt;
+          return { stream: partsStream([]) } as any;
+        },
+      }),
+    );
+
+    for await (const _ of model.getStreamedResponse({
+      systemInstructions: 'inst',
+      input: 'hi',
+      tools: [],
+      handoffs: [],
+      modelSettings: {},
+      outputType: 'text',
+      tracing: false,
+    } as any)) {
+      // drain
+    }
+
+    expect(received[0]).toEqual({ role: 'system', content: 'inst' });
+  });
+});
+
+describe('toolChoiceToLanguageV2Format', () => {
+  test('maps default choices and specific tool', () => {
+    expect(toolChoiceToLanguageV2Format(undefined)).toBeUndefined();
+    expect(toolChoiceToLanguageV2Format(null as any)).toBeUndefined();
+    expect(toolChoiceToLanguageV2Format('auto')).toEqual({ type: 'auto' });
+    expect(toolChoiceToLanguageV2Format('required')).toEqual({
+      type: 'required',
+    });
+    expect(toolChoiceToLanguageV2Format('none')).toEqual({ type: 'none' });
+    expect(toolChoiceToLanguageV2Format('runTool' as any)).toEqual({
+      type: 'tool',
+      toolName: 'runTool',
+    });
+  });
 });
 
 describe('AiSdkModel', () => {
@@ -749,17 +929,18 @@ describe('AiSdkModel', () => {
   test('converts trailing function_call items to messages', async () => {
     let received: any;
     const fakeModel = {
-      specificationVersion: 'v1',
+      specificationVersion: 'v2',
       provider: 'fake',
       modelId: 'm',
-      defaultObjectGenerationMode: undefined,
+      supportedUrls: [],
       doGenerate: vi.fn(async (opts: any) => {
         received = opts.prompt;
         return {
-          text: 'ok',
-          finishReason: 'stop',
-          usage: { promptTokens: 0, completionTokens: 0 },
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
           providerMetadata: {},
+          finishReason: 'stop',
+          warnings: [],
         };
       }),
     };
@@ -794,12 +975,11 @@ describe('AiSdkModel', () => {
             type: 'tool-call',
             toolCallId: 'call1',
             toolName: 'do',
-            args: {},
-
-            providerMetadata: { meta: 1 },
+            input: {},
+            providerOptions: { meta: 1 },
           },
         ],
-        providerMetadata: { meta: 1 },
+        providerOptions: { meta: 1 },
       },
     ]);
   });

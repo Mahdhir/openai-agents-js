@@ -4,7 +4,12 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Agent, Runner, setDefaultOpenAIKey } from '@openai/agents';
+import {
+  Agent,
+  getDefaultModelSettings,
+  Runner,
+  setDefaultOpenAIKey,
+} from '@openai/agents';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,9 +123,10 @@ export async function extractSidebarTranslations(
 const sourceDir = path.resolve(__dirname, '../../src/content/docs');
 const languages: Record<string, string> = {
   ja: 'Japanese',
+  zh: 'Chinese',
   // Add more languages here
 };
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'o3';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
 setDefaultOpenAIKey(process.env.OPENAI_API_KEY || '');
 const ENABLE_CODE_SNIPPET_EXCLUSION = true;
 
@@ -175,6 +181,38 @@ const engToNonEngMapping: Record<string, Record<string, string>> = {
       'ほんの数分ではじめてのエージェントをつくることができます。',
     "Let's build": 'はじめる',
   },
+  zh: {
+    agents: '智能体',
+    'computer use': '计算机操作',
+    'OAI hosted tools': 'OpenAI 托管工具',
+    'well formed data': '格式良好的数据',
+    guardrail: '护栏',
+    handoffs: '交接',
+    'function tools': '函数工具',
+    tracing: '追踪',
+    'code examples': '代码示例',
+    'vector store': '向量存储',
+    'deep research': '深度研究',
+    category: '类别',
+    user: '用户',
+    parameter: '参数',
+    processor: '处理器',
+    server: '服务器',
+    'web search': 'Web 搜索',
+    'file search': '文件搜索',
+    streaming: '流式传输',
+    'system prompt': '系统提示',
+    'TypeScript-first': 'TypeScript 优先',
+    'Human in the loop': '人工干预',
+    'Hosted tool': '托管工具',
+    'Hosted MCP server tools': '远程 MCP 服务器工具',
+    raw: '原始',
+    'Realtime Agents': '实时智能体',
+    'Build your first agent in minutes.': '几分钟内构建您的第一个智能体。',
+    "Let's build": '开始构建',
+    Overview: '概述',
+    Quickstart: '快速上手',
+  },
 };
 
 const engToNonEngInstructions: Record<string, string[]> = {
@@ -188,6 +226,13 @@ const engToNonEngInstructions: Record<string, string[]> = {
     "* The term 'result' in the Runner guide context must be translated like an 'execution result'",
     '* You must consistently use polite wording such as です/ます rather than である/なのだ.',
     "* Don't put 。 at the end for non-sentence bullet points",
+  ],
+  zh: [
+    "* The term 'result' in the Runner guide context must be translated as '运行结果' or '执行结果'",
+    '* Use clear and concise Chinese expressions, avoiding overly formal or archaic language',
+    '* For technical terms, prefer commonly accepted Chinese translations over literal translations',
+    '* Use Chinese punctuation marks appropriately (。，；：""\'\'（）)',
+    '* When translating code-related content, maintain consistency with established Chinese programming terminology',
   ],
 };
 
@@ -227,11 +272,38 @@ You must return **only** the translated markdown. Do not include any commentary,
 - No markdown tags.
 
 #########################
+##  HARD CONSTRAINTS   ##
+#########################
+- Never insert spaces immediately inside emphasis markers. Use \`**bold**\`, not \`** bold **\`.
+- Preserve the number of emphasis markers from the source: if the source uses \`**\` or \`__\`, keep the same pair count.
+- Ensure one space after heading markers: \`##Heading\` -> \`## Heading\`.
+- Ensure one space after list markers: \`-Item\` -> \`- Item\`, \`*Item\` -> \`* Item\` (does not apply to \`**\`).
+- Trim spaces inside link/image labels: \`[ Label ](url)\` -> \`[Label](url)\`.
+
+###########################
+##  GOOD / BAD EXAMPLES  ##
+###########################
+- Good: This is **bold** text.
+- Bad:  This is ** bold ** text.
+- Good: ## Heading
+- Bad:  ##Heading
+- Good: - Item
+- Bad:  -Item
+- Good: [Label](https://example.com)
+- Bad:  [ Label ](https://example.com)
+
+#########################
 ##  LANGUAGE‑SPECIFIC  ##
 #########################
 *(applies only when ${targetLanguage} = Japanese)*  
 - Insert a half‑width space before and after all alphanumeric terms.  
-- Add a half‑width space just outside markdown emphasis markers: \` **太字** \` (good) vs \`** 太字 **\` (bad).
+- Add a half‑width space just outside markdown emphasis markers: \` **bold** \` (good) vs \`** bold **\` (bad).
+
+*(applies only when ${targetLanguage} = Chinese)*
+- Use proper Chinese punctuation marks (。，；：""''（）) instead of English ones
+- For technical terms mixed with Chinese text, add appropriate spacing for readability
+- Use simplified Chinese characters consistently
+- Follow Chinese grammar and sentence structure patterns
 
 #########################
 ##  DO NOT TRANSLATE   ##
@@ -250,6 +322,15 @@ ${specificTerms}
 #########################
 ${specificInstructions}
 - When translating Markdown tables, preserve the exact table structure, including all delimiters (|), header separators (---), and row/column counts. Only translate the cell contents. Do not add, remove, or reorder columns or rows.
+
+#########################
+##  VALIDATION STEPS   ##
+#########################
+Before returning the final title, run this mental checklist and fix issues if any:
+- No occurrences of: \`**\\s+[^*]*\\s+**\`, \`__\\s+[^_]*\\s+__\`.
+- No heading without a space: lines starting with \`#{1,6}\` must be followed by a space.
+- No list marker without a space: lines starting with \`-\`, \`+\`, or a single \`*\` must be followed by a space.
+- No spaces just inside \`[ ... ]\` or \`![ ... ]\` labels.
 
 #########################
 ##  IF UNSURE          ##
@@ -309,6 +390,7 @@ You must return **only** the translated markdown. Do not include any commentary,
 - Section titles must be translated except for the Do-Not-Translate list.
 - Do not omit any content. If a segment should stay in English, copy it verbatim.
 - Do not change the markdown data structure, including the indentations.
+- Keep the valid *.md/*.mdx data structure; Do not break anything at runtime.
 - Don't add any tags that don't exist in the origin text
 - Keep all placeholders such as \`CODE_BLOCK_*\` and \`CODE_LINE_PREFIX\` unchanged.
 - Don't add any tags before/after lines using astrojs items such as <Code> and their imports
@@ -324,11 +406,38 @@ You must return **only** the translated markdown. Do not include any commentary,
   - The internal links like [{label here}](path here) must be kept as-is.
 
 #########################
+##  HARD CONSTRAINTS   ##
+#########################
+- Never insert spaces immediately inside emphasis markers. Use \`**bold**\`, not \`** bold **\`.
+- Preserve the number of emphasis markers from the source: if the source uses \`**\` or \`__\`, keep the same pair count.
+- Ensure one space after heading markers: \`##Heading\` -> \`## Heading\`.
+- Ensure one space after list markers: \`-Item\` -> \`- Item\`, \`*Item\` -> \`* Item\` (does not apply to \`**\`).
+- Trim spaces inside link/image labels: \`[ Label ](url)\` -> \`[Label](url)\`.
+
+###########################
+##  GOOD / BAD EXAMPLES  ##
+###########################
+- Good: This is **bold** text.
+- Bad:  This is ** bold ** text.
+- Good: ## Heading
+- Bad:  ##Heading
+- Good: - Item
+- Bad:  -Item
+- Good: [Label](https://example.com)
+- Bad:  [ Label ](https://example.com)
+
+#########################
 ##  LANGUAGE‑SPECIFIC  ##
 #########################
 *(applies only when ${targetLanguage} = Japanese)*  
 - Insert a half‑width space before and after all alphanumeric terms.  
-- Add a half‑width space just outside markdown emphasis markers: \` **太字** \` (good) vs \`** 太字 **\` (bad). Review this rule again before returning the translated text.
+- Add a half‑width space just outside markdown emphasis markers: \` **bold** \` (good) vs \`** bold **\` (bad).
+
+*(applies only when ${targetLanguage} = Chinese)*
+- Use proper Chinese punctuation marks (。，；：""''（）) instead of English ones
+- For technical terms mixed with Chinese text, add appropriate spacing for readability
+- Use simplified Chinese characters consistently
+- Follow Chinese grammar and sentence structure patterns Review this rule again before returning the translated text.
 
 #########################
 ##  DO NOT TRANSLATE   ##
@@ -370,7 +479,13 @@ Follow the following workflow to translate the given markdown text data:
 3. Perform a self-review to evaluate the following points:
   - the quality of the translation, focusing on naturalness, accuracy, and consistency in detail
   - any errors or rooms for improvements in terms of Markdown text format -- A common error is to have spaces within special syntax like * or _. You must have spaces after special syntax like * or _, but it's NOT the same for the parts inside special syntax (e.g., ** bold ** must be **bold**)
+  - you should not have any unnecessary spaces outside of tags; especially for the ones you replace with the "TERM-SPECIFIC" list
   - any parts that are not compatible with *.mdx files -- In the past, you've generated an expression with acorn like {#title-here} in h2 (##) level but it was neither necessary nor valid
+  - Run a final regex check in your head and fix if any of these patterns appear in your output:
+    - \`**\\s+[^*]*\\s+**\` or \`__\\s+[^_]*\\s+__\` (spaces inside emphasis)
+    - Lines starting with \`#{1,6}\` not followed by a space
+    - Lines starting with \`-\`, \`+\`, or a single \`*\` not followed by a space
+    - Avoid spaces directly inside link or image labels: use \`[Label](url)\`, not \`[ Label ](url)\` or \`![ Label ](url)\`.
 4. If improvements are necessary, refine the content without changing the original meaning.
 5. Continue improving the translation until you are fully satisfied with the result.
 6. Once the final output is ready, return **only** the translated markdown text. No extra commentary.
@@ -384,7 +499,13 @@ async function callAgent(
   instructions: string,
   model: string = OPENAI_MODEL,
 ): Promise<string> {
-  const agent = new Agent({ name: 'translator', instructions, model });
+  const modelSettings = getDefaultModelSettings(model);
+  const agent = new Agent({
+    name: 'translator',
+    instructions,
+    model,
+    modelSettings,
+  });
   const result = await runner.run(agent, content);
   const output = result.finalOutput;
   if (!output) {
@@ -535,6 +656,7 @@ async function translateFile(
     const translated = await callAgent(chunk, instructions);
     translatedContent.push(translated);
   }
+  // Join translated chunks back together; formatting is guided by prompt constraints
   let translatedText = translatedContent.join('\n');
   for (let idx = 0; idx < codeBlocks.length; ++idx) {
     translatedText = translatedText.replace(

@@ -28,16 +28,19 @@ export type WebRTCState =
       status: 'disconnected';
       peerConnection: undefined;
       dataChannel: undefined;
+      callId: string | undefined;
     }
   | {
       status: 'connecting';
       peerConnection: RTCPeerConnection;
       dataChannel: RTCDataChannel;
+      callId: string | undefined;
     }
   | {
       status: 'connected';
       peerConnection: RTCPeerConnection;
       dataChannel: RTCDataChannel;
+      callId: string | undefined;
     };
 
 /**
@@ -92,6 +95,7 @@ export class OpenAIRealtimeWebRTC
     status: 'disconnected',
     peerConnection: undefined,
     dataChannel: undefined,
+    callId: undefined,
   };
   #useInsecureApiKey: boolean;
   #ongoingResponse: boolean = false;
@@ -102,8 +106,15 @@ export class OpenAIRealtimeWebRTC
       throw new Error('WebRTC is not supported in this environment');
     }
     super(options);
-    this.#url = options.baseUrl ?? `https://api.openai.com/v1/realtime`;
+    this.#url = options.baseUrl ?? `https://api.openai.com/v1/realtime/calls`;
     this.#useInsecureApiKey = options.useInsecureApiKey ?? false;
+  }
+
+  /**
+   * The current call ID of the WebRTC connection.
+   */
+  get callId() {
+    return this.#state.callId;
   }
 
   /**
@@ -156,7 +167,7 @@ export class OpenAIRealtimeWebRTC
     const isClientKey = typeof apiKey === 'string' && apiKey.startsWith('ek_');
     if (isBrowserEnvironment() && !this.#useInsecureApiKey && !isClientKey) {
       throw new UserError(
-        'Using the WebRTC connection in a browser environment requires an insecure API key. Please use a WebSocket connection instead or set the useInsecureApiKey option to true.',
+        'Using the WebRTC connection in a browser environment requires an ephemeral client key. If you need to use a regular API key, use the WebSocket transport or set the `useInsecureApiKey` option to true.',
       );
     }
 
@@ -172,11 +183,13 @@ export class OpenAIRealtimeWebRTC
 
         let peerConnection: RTCPeerConnection = new RTCPeerConnectionCtor();
         const dataChannel = peerConnection.createDataChannel('oai-events');
+        let callId: string | undefined = undefined;
 
         this.#state = {
           status: 'connecting',
           peerConnection,
           dataChannel,
+          callId,
         };
         this.emit('connection_change', this.#state.status);
 
@@ -185,6 +198,7 @@ export class OpenAIRealtimeWebRTC
             status: 'connected',
             peerConnection,
             dataChannel,
+            callId,
           };
           // Sending the session config again here once the channel is connected to ensure
           // that the session config is sent to the server before the first response is received
@@ -251,23 +265,18 @@ export class OpenAIRealtimeWebRTC
           throw new Error('Failed to create offer');
         }
 
-        const sessionConfig = {
-          ...this._getMergedSessionConfig(userSessionConfig),
-          model: this.currentModel,
-        };
-
-        const data = new FormData();
-        data.append('sdp', offer.sdp);
-        data.append('session', JSON.stringify(sessionConfig));
-
         const sdpResponse = await fetch(connectionUrl, {
           method: 'POST',
-          body: data,
+          body: offer.sdp,
           headers: {
+            'Content-Type': 'application/sdp',
             Authorization: `Bearer ${apiKey}`,
             'X-OpenAI-Agents-SDK': HEADERS['X-OpenAI-Agents-SDK'],
           },
         });
+
+        callId = sdpResponse.headers?.get('Location')?.split('/').pop();
+        this.#state = { ...this.#state, callId };
 
         const answer: RTCSessionDescriptionInit = {
           type: 'answer',
@@ -338,6 +347,7 @@ export class OpenAIRealtimeWebRTC
         status: 'disconnected',
         peerConnection: undefined,
         dataChannel: undefined,
+        callId: undefined,
       };
       this.emit('connection_change', this.#state.status);
       this._onClose();

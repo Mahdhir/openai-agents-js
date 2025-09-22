@@ -1,5 +1,6 @@
+import type { Agent } from './agent';
 import type { Computer } from './computer';
-import type { infer as zInfer, ZodObject } from 'zod/v3';
+import type { infer as zInfer, ZodObject } from 'zod';
 import {
   JsonObjectSchema,
   JsonObjectSchemaNonStrict,
@@ -11,12 +12,14 @@ import { toFunctionToolName } from './utils/tools';
 import { getSchemaAndParserFromInputType } from './utils/tools';
 import { isZodObject } from './utils/typeGuards';
 import { RunContext } from './runContext';
+import type { RunResult } from './result';
 import { ModelBehaviorError, UserError } from './errors';
 import logger from './logger';
 import { getCurrentSpan } from './tracing';
 import { RunToolApprovalItem, RunToolCallOutputItem } from './items';
 import { toSmartString } from './utils/smartString';
 import * as ProviderData from './types/providerData';
+import * as protocol from './types/protocol';
 
 /**
  * A function that determines if a tool call should be approved.
@@ -67,6 +70,7 @@ export type FunctionTool<
   invoke: (
     runContext: RunContext<Context>,
     input: string,
+    details?: { toolCall: protocol.FunctionCallItem },
   ) => Promise<string | Result>;
 
   /**
@@ -134,52 +138,126 @@ export type HostedMCPTool<Context = UnknownContext> = HostedTool & {
  */
 export function hostedMcpTool<Context = UnknownContext>(
   options: {
-    serverLabel: string;
-    serverUrl: string;
     allowedTools?: string[] | { toolNames?: string[] };
-    headers?: Record<string, string>;
-  } & (
-    | { requireApproval?: never }
-    | { requireApproval: 'never' }
-    | {
-        requireApproval:
-          | 'always'
-          | {
-              never?: { toolNames: string[] };
-              always?: { toolNames: string[] };
-            };
-        onApproval?: HostedMCPApprovalFunction<Context>;
-      }
-  ),
-): HostedMCPTool<Context> {
-  const providerData: ProviderData.HostedMCPTool<Context> =
-    typeof options.requireApproval === 'undefined' ||
-    options.requireApproval === 'never'
-      ? {
-          type: 'mcp',
-          server_label: options.serverLabel,
-          server_url: options.serverUrl,
-          require_approval: 'never',
-          allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
-          headers: options.headers,
+  } &
+    // MCP server
+    (| {
+          serverLabel: string;
+          serverUrl?: string;
+          authorization?: string;
+          headers?: Record<string, string>;
         }
-      : {
-          type: 'mcp',
-          server_label: options.serverLabel,
-          server_url: options.serverUrl,
-          allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
-          headers: options.headers,
-          require_approval:
-            typeof options.requireApproval === 'string'
-              ? 'always'
-              : buildRequireApproval(options.requireApproval),
-          on_approval: options.onApproval,
-        };
-  return {
-    type: 'hosted_tool',
-    name: 'hosted_mcp',
-    providerData,
-  };
+      // OpenAI Connector
+      | {
+          serverLabel: string;
+          connectorId: string;
+          authorization?: string;
+          headers?: Record<string, string>;
+        }
+    ) &
+    (
+      | { requireApproval?: never }
+      | { requireApproval: 'never' }
+      | {
+          requireApproval:
+            | 'always'
+            | {
+                never?: { toolNames: string[] };
+                always?: { toolNames: string[] };
+              };
+          onApproval?: HostedMCPApprovalFunction<Context>;
+        }
+    ),
+): HostedMCPTool<Context> {
+  if ('serverUrl' in options) {
+    // the MCP servers comaptible with the specification
+    const providerData: ProviderData.HostedMCPTool<Context> =
+      typeof options.requireApproval === 'undefined' ||
+      options.requireApproval === 'never'
+        ? {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            server_url: options.serverUrl,
+            require_approval: 'never',
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+            headers: options.headers,
+          }
+        : {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            server_url: options.serverUrl,
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+            headers: options.headers,
+            require_approval:
+              typeof options.requireApproval === 'string'
+                ? 'always'
+                : buildRequireApproval(options.requireApproval),
+            on_approval: options.onApproval,
+          };
+    return {
+      type: 'hosted_tool',
+      name: 'hosted_mcp',
+      providerData,
+    };
+  } else if ('connectorId' in options) {
+    // OpenAI's connectors
+    const providerData: ProviderData.HostedMCPTool<Context> =
+      typeof options.requireApproval === 'undefined' ||
+      options.requireApproval === 'never'
+        ? {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            connector_id: options.connectorId,
+            authorization: options.authorization,
+            require_approval: 'never',
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+            headers: options.headers,
+          }
+        : {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            connector_id: options.connectorId,
+            authorization: options.authorization,
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+            headers: options.headers,
+            require_approval:
+              typeof options.requireApproval === 'string'
+                ? 'always'
+                : buildRequireApproval(options.requireApproval),
+            on_approval: options.onApproval,
+          };
+    return {
+      type: 'hosted_tool',
+      name: 'hosted_mcp',
+      providerData,
+    };
+  } else {
+    // the MCP servers comaptible with the specification
+    const providerData: ProviderData.HostedMCPTool<Context> =
+      typeof options.requireApproval === 'undefined' ||
+      options.requireApproval === 'never'
+        ? {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            require_approval: 'never',
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+          }
+        : {
+            type: 'mcp',
+            server_label: options.serverLabel,
+            allowed_tools: toMcpAllowedToolsFilter(options.allowedTools),
+            require_approval:
+              typeof options.requireApproval === 'string'
+                ? 'always'
+                : buildRequireApproval(options.requireApproval),
+            on_approval: options.onApproval,
+          };
+    return {
+      type: 'hosted_tool',
+      name: 'hosted_mcp',
+      providerData,
+    };
+  }
 }
 
 /**
@@ -235,6 +313,16 @@ export type FunctionToolResult<
        * The run item representing the tool call output.
        */
       runItem: RunToolCallOutputItem;
+      /**
+       * The result returned when the tool execution runs another agent. Populated when the
+       * invocation originated from {@link Agent.asTool} and the nested agent completed a run.
+       */
+      agentRunResult?: RunResult<Context, Agent<Context, any>>;
+      /**
+       * Any interruptions collected while the nested agent executed. These are surfaced to allow
+       * callers to pause and resume workflows that require approvals.
+       */
+      interruptions?: RunToolApprovalItem[];
     }
   | {
       /**
@@ -337,6 +425,7 @@ type ToolExecuteFunction<
 > = (
   input: ToolExecuteArgument<TParameters>,
   context?: RunContext<Context>,
+  details?: { toolCall: protocol.FunctionCallItem },
 ) => Promise<unknown> | unknown;
 
 /**
@@ -517,6 +606,7 @@ export function tool<
   async function _invoke(
     runContext: RunContext<Context>,
     input: string,
+    details?: { toolCall: protocol.FunctionCallItem },
   ): Promise<Result> {
     const [error, parsed] = await safeExecute(() => parser(input));
     if (error !== null) {
@@ -534,7 +624,7 @@ export function tool<
       logger.debug(`Invoking tool ${name} with input ${input}`);
     }
 
-    const result = await options.execute(parsed, runContext);
+    const result = await options.execute(parsed, runContext, details);
     const stringResult = toSmartString(result);
 
     if (logger.dontLogToolData) {
@@ -549,8 +639,9 @@ export function tool<
   async function invoke(
     runContext: RunContext<Context>,
     input: string,
+    details?: { toolCall: protocol.FunctionCallItem },
   ): Promise<string | Result> {
-    return _invoke(runContext, input).catch<string>((error) => {
+    return _invoke(runContext, input, details).catch<string>((error) => {
       if (toolErrorFunction) {
         const currentSpan = getCurrentSpan();
         currentSpan?.setError({
