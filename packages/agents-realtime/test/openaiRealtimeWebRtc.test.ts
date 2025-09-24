@@ -240,7 +240,7 @@ describe('OpenAIRealtimeWebRTC.callId', () => {
       configurable: true,
       writable: true,
     });
-    lastChannel = null;
+    lastChannelRef.set(null);
   });
 
   it('returns the callId', async () => {
